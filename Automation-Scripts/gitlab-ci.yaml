@@ -1,0 +1,371 @@
+# ======================
+# GITLAB CI/CD PIPELINE
+# ======================
+
+# ZMIENNE GLOBALNE
+# Te zmienne są dostępne we wszystkich zadaniach (jobs) w pipeline
+variables:
+  # DOCKER_DRIVER określa sposób działania Docker-a w GitLab CI
+  # overlay2 to wydajny sterownik systemu plików dla kontenerów
+  DOCKER_DRIVER: overlay2
+
+# ETAPY PIPELINE (STAGES)
+# Pipeline jest podzielony na 3 główne etapy wykonywane sekwencyjnie:
+# 1. build - budowanie aplikacji i obrazu Docker
+# 2. test - testowanie i skanowanie bezpieczeństwa
+# 3. deploy - wdrażanie na środowisko docelowe
+stages:
+- build # Etap 1: Budowanie
+- test # Etap 2: Testowanie  
+- deploy # Etap 3: Wdrażanie
+
+# =============================================================================
+# ETAP 1: BUDOWANIE OBRAZU DOCKER
+# =============================================================================
+build_image:
+  stage: build # Przypisanie do etapu "build"
+  image: docker:latest # Użycie najnowszego obrazu Docker jako środowiska
+  services:
+  - docker:dind # Docker-in-Docker - pozwala budować obrazy w kontenerze
+  # PRZED SKRYPTEM - przygotowanie środowiska
+  before_script:
+  - docker info # Sprawdzenie czy Docker działa poprawnie
+  # GŁÓWNY SKRYPT BUDOWANIA
+  script:
+  # KROK 1: Logowanie do rejestru Docker (GitLab Container Registry)
+  #
+  # ZMIENNE AUTOMATYCZNE GITLAB CI/CD (nie musisz ich ustawiać w variables gitlab):
+  # - CI_REGISTRY: automatycznie ustawiana przez GitLab na "registry.gitlab.com" - jeli z niej skorzystasz, zalogujeszs ię do rejestru GitLab Container Registry, jeślie nie, to do domyślnego rejestru Docker Hub
+  # - CI_COMMIT_SHA: pełny hash SHA commita (40 znaków). Ja skracam go do 8 znaków dla tagu.
+  # - CI_COMMIT_REF_NAME: nazwa brancha lub taga (np. "main", "feature/login", "v1.2.3")
+  #
+  # ZMIENNE DO USTAWIENIA W GITLAB UI (Settings > CI/CD > Variables):
+  # - CI_REGISTRY_USER: ustaw w gitlab variable - możesz nazwać ją CI_DEPLOY_USER - lub jak wolisz
+  # - CI_REGISTRY_PASSWORD: ustaw w gitlab variable - możesz nazwać ją CI_DEPLOY_PASSWORD - lub jak wolisz
+  #
+  # JAK USTAWIĆ CI_REGISTRY_USER i CI_REGISTRY_PASSWORD:
+  # 1. Idź do Settings > Repository > Deploy tokens
+  # 2. Utwórz nowy Deploy Token z uprawnieniami "read_registry"
+  # 3. Skopiuj wygenerowany token i ustaw w vara bles GitLab w Twoje_Repository > Settings > CI/CD > Variables
+  # - key: CI_REGISTRY_PASSWORD
+  # - value: wartość wygenerowanego hasla 
+  # oraz druga zmienna 
+  # - key:CI_REGISTRY_USER 
+  # - value: nazwa użytkownika z Deploy Token
+
+  - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+
+  # KROK 2: Tworzenie unikalnego tagu dla obrazu
+  #
+  # WYJAŚNIENIE NAZEWNICTWA BRANCHY:
+  # - main/master: główny branch produkcyjny
+  # - develop: branch rozwojowy  
+  # - feature/nazwa-funkcji: branch dla nowej funkcjonalności
+  # - hotfix/nazwa-poprawki: branch dla pilnych poprawek
+  # - release/v1.2.3: branch dla wydania konkretnej wersji
+  #
+  # - COMMIT_HASH: pierwsze 8 znaków z SHA commita (np. a1b2c3d4)
+  #   Pozwala na jednoznaczną identyfikację konkretnej wersji kodu
+  - COMMIT_HASH=$(echo "$CI_COMMIT_SHA" | cut -c1-8)
+  # - CURRENT_DATE: dzisiejsza data w formacie YYYYMMDD (np. 20250607)
+  #   Pomaga w sortowaniu chronologicznym obrazów
+  - CURRENT_DATE=$(date +%Y%m%d)
+  # - SAFE_BRANCH_NAME: nazwa brancha z zamienionymi niebezpiecznymi znakami na myślniki
+  #   Docker nie akceptuje wszystkich znaków w tagach, więc czyścimy nazwę brancha
+  #   Przykład: "feature/user-login" -> "feature-user-login"
+  - SAFE_BRANCH_NAME=$(echo "$CI_COMMIT_REF_NAME" | tr -c 'a-zA-Z0-9._-' '-')
+  # - IMAGE_TAG: pełny tag obrazu łączący rejestr, branch, datę i hash
+  #   Przykład końcowy: registry.gitlab.com/projekt/app:main-20250607-a1b2c3d4
+  #   Dzięki temu tag jest unikalny i zawiera wszystkie ważne informacje
+  - IMAGE_TAG="${CI_REGISTRY_IMAGE}:${SAFE_BRANCH_NAME}-${CURRENT_DATE}-${COMMIT_HASH}"
+
+  # KROK 3: Budowanie obrazu Docker
+  - echo "Building Docker image with tag $IMAGE_TAG"
+  # Budowanie obrazu z Dockerfile znajdującego się w głównym katalogu projektu
+  # Dockerfile musi istnieć w głównym katalogu twojego repozytorium
+  - docker build -t "$IMAGE_TAG" .
+
+  # KROK 4: Sprawdzenie zbudowanych obrazów (dla debugowania)
+  - echo "Built images:"
+  - docker images
+
+  # KROK 5: Wysyłanie obrazu do rejestru
+  - echo "Pushing Docker image with tag $IMAGE_TAG"
+  # Push do GitLab Container Registry - tam będą przechowywane wszystkie twoje obrazy
+  - docker push "$IMAGE_TAG"
+
+  # KROK 6: Zapisanie tagu obrazu do pliku (do użycia w kolejnych etapach)
+  # Zapisujemy tag do pliku, bo każdy etap pipeline to osobny kontener
+  # i nie ma dostępu do zmiennych z poprzednich etapów
+  - echo "$IMAGE_TAG" > "$CI_PROJECT_DIR/image_tag.txt"
+  # ARTEFAKTY - pliki przekazywane między etapami pipeline
+  # GitLab automatycznie przeniesie te pliki do kolejnych etapów
+  artifacts:
+    paths:
+    - $CI_PROJECT_DIR/image_tag.txt # Plik z tagiem obrazu dla kolejnych etapów
+
+# =============================================================================
+# ETAP 2: SKANOWANIE BEZPIECZEŃSTWA OBRAZU
+# =============================================================================
+scan_image:
+  stage: test # Przypisanie do etapu "test"
+  image: docker:latest # Użycie obrazu Docker
+  services:
+  - docker:dind # Docker-in-Docker dla pobierania obrazów
+  # PRZYGOTOWANIE NARZĘDZIA TRIVY (skaner bezpieczeństwa)
+  before_script:
+  # Instalacja narzędzi pomocniczych w kontenerze Alpine Linux
+  # apk to menedżer pakietów Alpine Linux (jak apt w Ubuntu)
+  - apk add --no-cache curl grep sed
+  # Pobieranie najnowszej wersji Trivy z GitHub API
+  # curl pobiera JSON z informacjami o najnowszym wydaniu
+  # grep i sed wyciągają numer wersji z JSON-a
+  - VERSION=$(curl --silent "https://api.github.com/repos/aquasecurity/trivy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+  # Pobieranie i rozpakowywanie Trivy ze strony GitHub releases
+  - wget "https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/trivy_${VERSION}_Linux-64bit.tar.gz"
+  - tar -zxvf "trivy_${VERSION}_Linux-64bit.tar.gz"
+  # Konfiguracja uwierzytelniania dla Trivy
+  # Trivy potrzebuje dostępu do rejestru, aby pobrać obraz do skanowania
+  - export TRIVY_USERNAME="$CI_REGISTRY_USER"
+  - export TRIVY_PASSWORD="$CI_REGISTRY_PASSWORD"
+  - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+  # POZWOLENIE NA NIEPOWODZENIE - skanowanie nie zatrzyma pipeline w przypadku błędu
+  # Ten etap nie jest krytyczny dla działania aplikacji, więc nie powinien zatrzymywać 
+  # całego pipeline w przypadku błędów skanowania lub znalezienia luk bezpieczeństwa
+  allow_failure: true
+
+  # GŁÓWNY SKRYPT SKANOWANIA
+  # WAŻNE: Każdy job to oddzielny kontener, więc nie ma dostępu do plików z poprzednich etapów
+  # WYJĄTEK: pliki określone w artifacts są automatycznie przenoszone między etapami
+  # Dlatego zapisujemy tag obrazu do pliku w pierwszym etapie, a tutaj go odczytujemy
+  # Zmienne środowiskowe jak CI_REGISTRY są dostępne we wszystkich etapach
+  script:
+  # KROK 1: Odczytanie tagu obrazu z poprzedniego etapu
+  - IMAGE_TAG=$(cat image_tag.txt)
+  - echo "Scanning image $IMAGE_TAG"
+  # KROK 2: Pobranie obrazu do skanowania
+  - docker pull "$IMAGE_TAG"
+
+  # KROK 3: Skanowanie bezpieczeństwa
+  # Trivy skanuje obraz pod kątem znanych luk bezpieczeństwa (CVE)
+  # - exit-code 0: nie zatrzymuj pipeline przy znalezieniu luk
+  # - cache-dir: katalog do przechowywania bazy danych luk (dla przyspieszenia)
+  # - no-progress: nie pokazuj paska postępu (czytelniejsze logi)
+  # - format json: raport w formacie JSON do automatycznego przetwarzania
+  - ./trivy image --exit-code 0 --cache-dir .trivycache/ --no-progress --format json -o trivy-report.json "$IMAGE_TAG"
+  # - format table: czytelny raport tabelaryczny dla człowieka
+  - ./trivy image --exit-code 0 --cache-dir .trivycache/ --no-progress --format table -o trivy-report.txt "$IMAGE_TAG"
+  # KROK 4: Wyświetlenie raportu w logach CI/CD
+  - cat trivy-report.txt
+  # CACHE - przyspieszenie kolejnych skanowań przez zapisanie bazy danych luk bezpieczeństwa
+  # Trivy używa lokalnej bazy danych do szybkiego skanowania, więc cache znacznie przyspiesza proces
+  # GitLab automatycznie przechowuje i przywraca cache między uruchomieniami pipeline
+  cache:
+    paths:
+    - .trivycache/
+
+  # ARTEFAKTY - raporty bezpieczeństwa dostępne po zakończeniu
+  # Te pliki będą dostępne do pobrania z interfejsu GitLab przez 30 dni (domyślnie)
+  artifacts:
+    paths:
+    - trivy-report.txt # Raport czytelny dla człowieka
+    - trivy-report.json # Raport do automatycznego przetwarzania
+
+# =============================================================================
+# ETAP 3: WDRAŻANIE DO KUBERNETES
+# =============================================================================
+deploy:
+  stage: deploy # Przypisanie do etapu "deploy"
+  image: alpine:latest # Lekki obraz Alpine Linux
+
+  # PRZYGOTOWANIE ŚRODOWISKA WDRAŻANIA
+  before_script:
+  # Instalacja wszystkich potrzebnych narzędzi w kontenerze Alpine Linux
+  - apk add --no-cache curl bash jq helm kubectl git
+  #
+  # KONFIGURACJA DOSTĘPU DO KLASTRA KUBERNETES
+  #
+  # ZMIENNE DO USTAWIENIA W GITLAB UI (Settings > CI/CD > Variables):
+  # - KUBECONFIG_FILE: zawartość pliku ~/.kube/config z twojego serwera Kubernetes
+  #   JAK UZYSKAĆ KUBECONFIG:
+  #   1. Na serwerze gdzie masz kubectl: cat ~/.kube/config
+  #   2. Skopiuj całą zawartość i wklej jako wartość zmiennej KUBECONFIG_FILE
+  #   3. Ustaw Type na "File" w GitLab Variables
+  # UWAGA: w tym poliku zobaczysz lokalne IP twojego serwera Kubernetes, więc musisz je smienić na publiczne IP lub DNS twojego klastra. Oczywiście klaster musi być ówcześnie skonfigurowany i dostępny z internetu.
+  - export KUBECONFIG=$KUBECONFIG_FILE
+  # Ustawienie kontekstu klastra Kubernetes
+  # Kontekst określa z którym klastrem, namespace i użytkownikiem pracujemy
+  - kubectl config use-context default
+  # GŁÓWNY SKRYPT WDRAŻANIA
+  # Ja stosuję metodę jeden uniwersalny Helm chart dla wszystkich mikroserwisów
+  # oraz indywidualne pliki values.yaml dla każdego mikroserwisu.
+  # Dzięki temu mamy spójną strukturę i łatwiej zarządzać konfiguracją.
+  # Możesz oczywiście dostosować to do swoich potrzeb, ale ta metoda jest bardzo elastyczna i skalowalna.
+  script:
+  # KROK 1: POBIERANIE HELM CHARTS
+  - echo "Cloning universal chart"
+  #
+  # ZMIENNE DO USTAWIENIA W GITLAB UI (Settings > CI/CD > Variables):
+  # - GITLAB_TOKEN: Personal Access Token wygenerowany w GitLab
+  #   JAK UTWORZYĆ GITLAB_TOKEN:
+  #   1. Idź do User Settings > Access Tokens
+  #   2. Utwórz token z uprawnieniami "read_repository"
+  #   3. Skopiuj wygenerowany token i ustaw jako GITLAB_TOKEN w Variables - tak jak poprzdnio 
+  # Róznica jest taka, że tutaj używamy tokena do klonowania repo z chartami, a nie do rejestru Docker. Dlatego potrzebujemy innego tokena.
+  #
+  # INTELIGENTNE POBIERANIE CHARTÓW:
+  # Sprawdzamy czy w repozytorium z chartami istnieje branch o tej samej nazwie
+  # co branch w którym uruchamiamy pipeline. Jeśli tak, używamy go.
+  # Jeśli nie, używamy głównego brancha (main).
+  # Dzięki temu możemy testować zmiany w chartach bez tworzenia nowych branchy
+  - |
+    if git ls-remote --exit-code --heads https://oauth2:${GITLAB_TOKEN}@gitlab.com/PATH/DO/TWOJEGO/charts-repo.git $CI_COMMIT_REF_NAME; then
+      echo "Branch $CI_COMMIT_REF_NAME exists in charts repo, using it"
+      # Jeśli branch istnieje, użyj go (przydatne przy testowaniu zmian w charts)
+      git clone --branch $CI_COMMIT_REF_NAME https://oauth2:${GITLAB_TOKEN}@gitlab.com/PATH/DO/TWOJEGO/charts-repo.git
+    else
+      echo "Branch $CI_COMMIT_REF_NAME not found in charts repo, falling back to main"
+      # Jeśli nie ma brancha, użyj głównego (main)
+      git clone --branch main https://oauth2:${GITLAB_TOKEN}@gitlab.com/PATH/DO/TWOJEGO/charts-repo.git
+    fi
+
+  # KROK 2: PRZYGOTOWANIE NAMESPACE W KUBERNETES
+  - echo "Creating namespace if not exists"
+  # Namespace to logiczne oddzielenie zasobów w Kubernetes
+  # Każde środowisko (dev, staging, prod) powinno mieć swój namespace
+  # --dry-run=client generuje YAML bez wykonywania, | kubectl apply -f - aplikuje go
+  # To jest idempotentna operacja - można uruchomić wielokrotnie bez problemów
+  - kubectl create namespace my_namespace --dry-run=client -o yaml | kubectl apply -f -
+
+  # KROK 3: KONFIGURACJA SEKRETÓW KUBERNETES
+  - echo "Creating secrets"
+  #
+  # SEKRETY DO POBIERANIA OBRAZÓW Z PRYWATNEGO REJESTRU
+  # Kubernetes potrzebuje uwierzytelnienia, aby pobrać obraz z prywatnego rejestru GitLab
+  # Używamy tych samych zmiennych co do logowania Docker w etapie build, więc nie musisz ich ustawiać ponownie
+  # Sprawdzamy czy sekret już istnieje, jeśli nie - tworzymy go
+  - if ! kubectl get secret gitlabregistry-secret -n my_namespace >/dev/null 2>&1; then kubectl create secret docker-registry gitlabregistry-secret --docker-server="$CI_REGISTRY" --docker-username="$CI_DEPLOY_USER" --docker-password="$CI_DEPLOY_PASSWORD" --docker-email="" --namespace=my_namespace; fi
+
+  # SEKRETY APLIKACJI (baza danych, API keys, itp.)
+  #
+  # ZMIENNE DO USTAWIENIA W GITLAB UI (Settings > CI/CD > Variables):
+  # - DB_USER: nazwa użytkownika bazy danych (np. "myapp_user")
+  # - DB_PASSWORD: hasło do bazy danych (ustaw jako Protected i Masked)
+  # - DB_HOST: adres hosta bazy danych (np. "mysql-service.default.svc.cluster.local")
+  # - DB_NAME: nazwa bazy danych (np. "myapp_production")
+  #
+  # Usuwamy stary sekret i tworzymy nowy (zawsze świeże dane)
+  - kubectl delete secret app-secrets --ignore-not-found --namespace=my_namespace
+  # Kodowanie hasła do URL (znaki specjalne jak @, #, % mogą powodować problemy w URL)
+  - ENCODED_PASS=$(jq -rn --arg v "$DB_PASSWORD" '$v|@uri')
+  # Tworzenie connection string dla MySQL - moja aplikacja tego wymagała, lecz możesz dostosować do swoich potrzeb
+  # Format: mysql+pymysql://<user>:<password>@<host>:<port>/<database>
+  # pymysql to Python driver dla MySQL
+  - DATABASE_URL="mysql+pymysql://${DB_USER}:${ENCODED_PASS}@${DB_HOST}:3306/${DB_NAME}"
+  # Utworzenie sekretu Kubernetes z connection string
+  # Ten sekret będzie dostępny dla aplikacji jako zmienna środowiskowa
+  - kubectl create secret generic app-secrets --from-literal=DATABASE_URL="$DATABASE_URL" --namespace=my_namespace
+
+  # KROK 4: WDRAŻANIE APLIKACJI PRZY POMOCY HELM
+  - echo "Deploying user-api"
+  # Odczytanie tagu obrazu z pierwszego etapu (z artifacts)
+  - IMAGE_TAG=$(cat image_tag.txt)
+  # Rozdzielenie tagu na repozytorium i wersję
+  # Przykład: "registry.gitlab.com/projekt/app:main-20250607-a1b2c3d4"
+  - REPO=$(echo "$IMAGE_TAG" | cut -d ':' -f 1) # "registry.gitlab.com/projekt/app"
+  - TAG=$(echo "$IMAGE_TAG" | cut -d ':' -f 2) # "main-20250607-a1b2c3d4"
+
+  # HELM UPGRADE/INSTALL - inteligentne wdrożenie
+  #
+  # ARCHITEKTURA HELM CHARTS:
+  # Stosujemy best practice: jeden uniwersalny chart dla wszystkich mikroserwisów 
+  # oraz indywidualne pliki values.yaml dla każdego mikroserwisu.
+  #
+  # STRUKTURA PROJEKTU:
+  # charts-repo/
+  # ├── microservice/          # uniwersalny Helm chart
+  # │   ├── Chart.yaml
+  # │   ├── values.yaml        # domyślne wartości
+  # │   └── templates/         # szablony Kubernetes
+  # └── values-user-api.yaml   # specyficzne wartości dla user-api
+  #
+  # PLIK values-user-api.yaml POWINIEN ZAWIERAĆ:
+  # service:
+  #   name: user-api
+  #   port: 8080
+  # image:
+  #   repository: ""  # będzie nadpisane przez --set
+  #   tag: ""         # będzie nadpisane przez --set
+  # env:
+  #   - name: DATABASE_URL
+  #     valueFrom:
+  #       secretKeyRef:
+  #         name: app-secrets
+  #         key: DATABASE_URL
+  #
+  - helm upgrade --install user-api ./charts-repo/microservice --namespace=my_namespace --create-namespace -f values-user-api.yaml --set image.repository="$REPO" --set image.tag="$TAG"
+  #
+  # WYJAŚNIENIE PARAMETRÓW HELM:
+  # --upgrade --install: jeśli release "user-api" istnieje - zaktualizuj, jeśli nie - zainstaluj
+  # user-api: nazwa release (unikalny identyfikator wdrożenia w namespace)
+  # ./charts-repo/microservice: ścieżka do uniwersalnego chart
+  # --namespace=my_namespace: namespace docelowy w Kubernetes
+  # --create-namespace: utwórz namespace jeśli nie istnieje
+  # -f values-user-api.yaml: plik z konfiguracją specyficzną dla user-api
+  # --set: nadpisanie wartości z values.yaml (tutaj obrazu Docker)
+  #
+  # REZULTAT:
+  # Helm utworzy/zaktualizuje zasoby Kubernetes: Deployment, Service, ConfigMap, itp.
+  # na podstawie szablonów z chart i wartości z values-user-api.yaml
+
+  - echo "Deployment complete"
+
+# =============================================================================
+# PODSUMOWANIE ZMIENNYCH KTÓRE MUSISZ USTAWIĆ W GITLAB:
+#
+# Settings > CI/CD > Variables:
+# 1. CI_REGISTRY_USER - username z Deploy Token
+# 2. CI_REGISTRY_PASSWORD - token z Deploy Token  
+# 3. KUBECONFIG_FILE - zawartość pliku ~/.kube/config (Type: File)
+# 4. GITLAB_TOKEN - Personal Access Token do klonowania repo z charts
+# 5. DB_USER - nazwa użytkownika bazy danych
+# 6. DB_PASSWORD - hasło do bazy danych (Protected + Masked)
+# 7. DB_HOST - adres serwera bazy danych
+# 8. DB_NAME - nazwa bazy danych
+#
+# Settings > Repository > Deploy tokens:
+# 1. Utwórz Deploy Token z uprawnieniami "read_registry"
+# 2. Skopiuj username i token do zmiennych CI_REGISTRY_USER i CI_REGISTRY_PASSWORD
+#
+# User Settings > Access Tokens:
+# 1. Utwórz Personal Access Token z uprawnieniami "read_repository"
+# 2. Skopiuj token do zmiennej GITLAB_TOKEN
+# =============================================================================
+
+# =============================================================================
+# PODSUMOWANIE LOGIKI PIPELINE:
+#
+# 1. BUILD: 
+#    - Budujemy obraz Docker z unikalnym tagiem zawierającym branch, datę i hash commit
+#    - Wysyłamy obraz do GitLab Container Registry
+#    - Zapisujemy tag do pliku dla kolejnych etapów
+#
+# 2. TEST: 
+#    - Pobieramy obraz z rejestru
+#    - Skanujemy go pod kątem luk bezpieczeństwa używając Trivy
+#    - Generujemy raporty w formatach JSON i tekstowym
+#
+# 3. DEPLOY: 
+#    - Pobieramy Helm charts z osobnego repozytorium
+#    - Konfigurujemy namespace i sekrety w Kubernetes
+#    - Wdrażamy aplikację używając Helm z odpowiednimi parametrami
+#
+# KLUCZOWE KONCEPTY DEVOPS:
+# - CI/CD Pipeline (automatyzacja całego procesu)
+# - Containeryzacja (Docker dla spójności środowisk)
+# - Infrastructure as Code (Helm charts w Git)
+# - Security scanning (automatyczne wykrywanie luk)
+# - GitOps (konfiguracja infrastruktury w Git)
+# - Kubernetes orchestration (zarządzanie kontenerami)
+# - Immutable deployments (każdy deploy to nowy obraz)
+# =============================================================================

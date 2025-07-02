@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyAllExceptUserAndRoot",
+      "Effect": "Deny",
+      "NotPrincipal": {
+        "AWS": [
+          "arn:aws:iam::173504366721:user/t.krolikowski",
+          "arn:aws:iam::173504366721:root"
+        ]
+      },
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::tkrolikowski-bucket01",
+        "arn:aws:s3:::tkrolikowski-bucket01/*"
+      ]
+    }
+  ]
+}
