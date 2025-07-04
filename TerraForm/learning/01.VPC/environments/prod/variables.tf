@@ -1,3 +1,8 @@
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+}
+
 variable "name" {
   description = "Environment name"
   type        = string
@@ -29,9 +34,4 @@ variable "private_subnets" {
     availability_zone       = string
     map_public_ip_on_launch = bool
   }))
-}
-
-variable "aws_region" {
-  description = "AWS region for the environment"
-  type        = string
 }

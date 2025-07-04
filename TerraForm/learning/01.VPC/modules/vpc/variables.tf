@@ -1,25 +1,34 @@
-variable "vpc_cidr" {
-  description = "CIDR block for VPC"
+variable "name" {
+  description = "The name of the VPC"
   type        = string
 }
 
-variable "subnet_cidrs" {
-  description = "List of CIDR blocks for subnets"
-  type        = list(string)
-}
-
-variable "vpc_name" {
-  description = "Name of the VPC"
+variable "description" {
+  description = "The description of the VPC"
   type        = string
 }
 
-variable "aws_availability_zones" {
-  description = "List of AWS availability zones to use for subnets"
-  type        = list(string)
-
+variable "cidr_block" {
+  description = "The CIDR block for the VPC"
+  type        = string
 }
 
-variable "aws_region" {
-  description = "AWS region to deploy the VPC"
-  type        = string
+variable "public_subnets" {
+  description = "Map of public subnets"
+  type = map(object({
+    cidr                    = string
+    availability_zone       = string
+    map_public_ip_on_launch = bool
+  }))
+  default = {}
+}
+
+variable "private_subnets" {
+  description = "Map of private subnets"
+  type = map(object({
+    cidr                    = string
+    availability_zone       = string
+    map_public_ip_on_launch = bool
+  }))
+  default = {}
 }
