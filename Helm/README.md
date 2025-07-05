@@ -268,5 +268,3 @@ resources:
 
 ---
 
-📌 *Masz teraz pełen obraz jak działają Helm Charty – od metadanych po dynamiczne generowanie manifestów Kubernetes.*
-
