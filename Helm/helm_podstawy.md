@@ -1,3 +1,8 @@
+# 🚀 Helm – Podstawy i Architektura (z Komentarzami dla Początkujących)
+
+Ten dokument tłumaczy **Helm** od podstaw – jakbyś dopiero zaczynał przygodę z Kubernetesem. Zrozumiesz nie tylko **co robi Helm**, ale też **jak** i **dlaczego** jego struktura wygląda tak, a nie inaczej.
+
+---
 
 ## 🎯 Czym Jest Helm
 
@@ -69,6 +74,9 @@ moja-aplikacja/
 ```
 
 Każdy z tych plików ma swoje **konkretne zastosowanie**, które dokładnie wyjaśniamy w kolejnych sekcjach...
+
+🔽 *(ciąg dalszy poniżej w pełnym pliku .md)*  
+
 
 ---
 
@@ -151,4 +159,115 @@ resources:
 
 🔄 **Kolejna część** (szablony `deployment.yaml`, `helpers.tpl`, best practices) w kolejnym kroku.  
 Zapisuję ten fragment do pliku `.md`…
+
+
+
+---
+
+## 🛠️ Templates – Szablony w Helm
+
+Folder `templates/` zawiera pliki YAML z placeholderami (`{{ }}`), które Helm przetwarza na końcowe definicje Kubernetes (Deploymenty, Serwisy itd.).
+
+> 🔧 To tu dzieje się „magia” – dynamiczne generowanie plików YAML na podstawie konfiguracji `values.yaml`.
+
+Przykład `deployment.yaml`:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "moja-aplikacja.fullname" . }}
+  labels:
+    {{- include "moja-aplikacja.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "moja-aplikacja.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "moja-aplikacja.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+      - name: {{ .Chart.Name }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        ports:
+        - containerPort: {{ .Values.service.targetPort }}
+```
+
+---
+
+## 🔧 Go Template – Silnik Templatek
+
+Helm używa silnika Go Templates, który umożliwia:
+
+- 💬 Wstawianie zmiennych (`{{ .Values.coś }}`),
+- 🧠 Warunki logiczne (`if`, `else`, `range`, `with`),
+- 🔄 Iteracje i mapowanie,
+- 🧪 Funkcje (np. `quote`, `default`, `toYaml`).
+
+Przykład: iteracja po zmiennych środowiskowych
+
+```yaml
+env:
+{{- range .Values.env }}
+- name: {{ .name }}
+  value: {{ .value | quote }}
+{{- end }}
+```
+
+---
+
+## 🧩 _helpers.tpl – Funkcje Pomocnicze
+
+Plik `_helpers.tpl` pozwala definiować własne „makra” i funkcje, np. do generowania nazw, labeli, itp.
+
+```yaml
+{{- define "moja-aplikacja.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name .Chart.Name }}
+{{- end }}
+{{- end }}
+```
+
+Można je potem używać np. tak:
+```yaml
+name: {{ include "moja-aplikacja.fullname" . }}
+```
+
+---
+
+## ✅ Best Practices – Dobre Praktyki
+
+🔹 **Nazwy przez helpers**:
+```yaml
+name: {{ include "moja-aplikacja.fullname" . }}
+```
+
+🔹 **Labelowanie spójne z K8s**:
+```yaml
+labels:
+  {{- include "moja-aplikacja.labels" . | nindent 4 }}
+```
+
+🔹 **Wszystko konfigurowalne przez `values.yaml`**:
+```yaml
+replicas: {{ .Values.replicaCount | default 1 }}
+```
+
+🔹 **Blokowanie renderowania tylko jeśli coś ustawiono**:
+```yaml
+{{- if .Values.resources }}
+resources:
+  {{- toYaml .Values.resources | nindent 10 }}
+{{- end }}
+```
+
+🔹 **Używaj `quote`, `default`, `toYaml` – to bezpieczniejsze i czytelniejsze**
+
+---
+
+📌 *Masz teraz pełen obraz jak działają Helm Charty – od metadanych po dynamiczne generowanie manifestów Kubernetes.*
 
