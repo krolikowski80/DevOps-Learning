@@ -1,7 +1,4 @@
-# 🚀 Helm – Podstawy i Architektura (z Komentarzami dla Początkujących)
-
-Ten dokument tłumaczy **Helm** od podstaw – jakbyś dopiero zaczynał przygodę z Kubernetesem. Zrozumiesz nie tylko **co robi Helm**, ale też **jak** i **dlaczego** jego struktura wygląda tak, a nie inaczej.
-
+# 🚀 Helm – Podstawy i Architektura
 ---
 
 ## 🎯 Czym Jest Helm
@@ -269,5 +266,4 @@ resources:
 
 ---
 
-📌 *Masz teraz pełen obraz jak działają Helm Charty – od metadanych po dynamiczne generowanie manifestów Kubernetes.*
 
