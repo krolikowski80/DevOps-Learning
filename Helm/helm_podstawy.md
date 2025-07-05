@@ -70,9 +70,6 @@ moja-aplikacja/
 
 Każdy z tych plików ma swoje **konkretne zastosowanie**, które dokładnie wyjaśniamy w kolejnych sekcjach...
 
-🔽 *(ciąg dalszy poniżej w pełnym pliku .md)*  
-
-
 ---
 
 ## 🧾 Chart.yaml – Plik z Metadanymi
