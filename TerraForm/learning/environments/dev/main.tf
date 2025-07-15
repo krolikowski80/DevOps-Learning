@@ -8,10 +8,10 @@ module "vpc" {
   private_subnets = var.private_subnets
 }
 
-module "s3" {
-  source           = "../../modules/S3"
-  bucket_name      = var.bucket_name
-  environment      = var.environment
-  main_page_suffix = var.main_page_suffix
-  not_found_page   = var.not_found_page
-}
+# module "s3" {
+#   source           = "../../modules/S3"
+#   bucket_name      = var.bucket_name
+#   environment      = var.environment
+#   main_page_suffix = var.main_page_suffix
+#   not_found_page   = var.not_found_page
+# }
