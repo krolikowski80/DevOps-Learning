@@ -1,15 +1,16 @@
 variable "name" {
-  description = "The name of the VPC"
+  description = "Environment name"
   type        = string
 }
 
 variable "description" {
-  description = "The description of the VPC"
+  description = "Environment description"
   type        = string
+
 }
 
 variable "cidr_block" {
-  description = "The CIDR block for the VPC"
+  description = "VPC CIDR block"
   type        = string
 }
 
@@ -20,7 +21,6 @@ variable "public_subnets" {
     availability_zone       = string
     map_public_ip_on_launch = bool
   }))
-  default = {}
 }
 
 variable "private_subnets" {
@@ -30,10 +30,14 @@ variable "private_subnets" {
     availability_zone       = string
     map_public_ip_on_launch = bool
   }))
-  default = {}
 }
 
 variable "aws_region" {
-  description = "The AWS region where the VPC will be created"
+  description = "AWS region for the environment"
+  type        = string
+}
+
+variable "instance_type" {
+  description = "EC2 instance type for the environment"
   type        = string
 }
