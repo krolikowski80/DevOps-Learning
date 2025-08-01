@@ -220,3 +220,4 @@ __marimo__/
 **/*.tfvars
 
 TerraForm/course-examples/
+TerraForm/learning/modules/ec2_firewall/ssh/
