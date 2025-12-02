@@ -1,52 +1,36 @@
-variable "region" {
-  description = "The AWS region where the S3 bucket will be created."
-  type        = string
-}
+# ==============================================================================
+# TERRAFORM STATE BUCKET MODULE - INPUT VARIABLES
+# ==============================================================================
+# Interface definition dla state bucket module - przyjmuje parametry od caller'a
 
+## Environment identifier - używane w naming i tagging
 variable "environment" {
-  description = "The environment for which the S3 bucket is being created (e.g., dev, staging, prod)."
+  description = "Environment name for state bucket"
   type        = string
 }
 
+## Region gdzie będzie bucket - ważne dla backend configuration
+variable "region" {
+  description = "AWS region where S3 bucket will be created"
+  type        = string
+}
+
+## Unikalny suffix dla bucket name - S3 bucket names są globally unique
 variable "bucket_name_suffix" {
-  description = "The name of the S3 bucket to be created."
+  description = "Unique suffix to append to bucket name"
   type        = string
 }
 
+## Nazwa DynamoDB table dla state locking - można customize
 variable "table_name" {
-  description = "Name of the DynamoDB table for state locking"
+  description = "Name of DynamoDB table for state locking"
   type        = string
   default     = "terraform-state-lock"
 }
 
+## Lifecycle policy - po ilu dniach usuwać stare wersje state
 variable "lifecycle_expiration_days" {
-  description = "Number of days after which the Terraform state files will expire."
+  description = "Number of days after which old state versions expire"
   type        = number
   default     = 90
 }
-
-variable "block_public_acls" {
-  description = "Whether to block public ACLs on the S3 bucket."
-  type        = bool
-  default     = true
-  
-}
-
-variable "ignore_public_acls" {
-  description = "Whether to ignore public ACLs on the S3 bucket."
-  type        = bool
-  default     = true 
-}
-
-variable "block_public_policy" {
-  description = "Whether to block public policies on the S3 bucket."
-  type        = bool
-  default     = true  
-  
-}
- variable "restrict_public_buckets" {
-  description = "Whether to restrict public buckets."
-  type        = bool
-  default     = true  
-   
- }

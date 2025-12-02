@@ -74,9 +74,9 @@ variable "single_nat_gateway" {
   default     = true
 }
 
-## Project name dla resource naming i tagging - używane w całej infrastrukturze
-variable "project_name" {
-  description = "Project name for resource naming and tagging"
+## SSH Key configuration - path do public key dla EC2 access
+variable "public_key_path" {
+  description = "Path to SSH public key file"
   type        = string
-  default     = "terraform-project"
+  default     = "~/.ssh/id_rsa_AWS.pub"
 }
